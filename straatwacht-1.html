@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Straatwacht</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-bleed camera view with zone overlay, compact control strip and event log below */
+:root{
+  --bg:#0e1214; --panel:#171d20; --line:#2a3337; --fg:#e6ecee; --muted:#8a989d;
+  --accent:#ffb000; --hit:#ff4d3a; --ok:#3ddc97;
+  --display:"Space Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--display)}
+body{padding:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+h1{font-size:20px;margin:0;letter-spacing:.02em}
+#status{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+#status.live{color:var(--ok)} #status.hit{color:var(--hit)}
+.stage{position:relative;width:100%;aspect-ratio:4/3;max-width:100%;background:#000;border:1px solid var(--line);border-radius:6px;overflow:hidden;touch-action:none}
+video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#flash{position:absolute;inset:0;background:var(--hit);opacity:0;pointer-events:none;transition:opacity .5s}
+#flash.on{opacity:.45;transition:none}
+#hint{position:absolute;left:10px;bottom:8px;font:12px var(--mono);color:var(--fg);background:rgba(0,0,0,.55);padding:3px 7px;border-radius:3px}
+#start{position:absolute;inset:0;margin:auto;width:max-content;height:max-content;font:700 17px var(--display);padding:14px 26px;border:0;border-radius:6px;background:var(--accent);color:#111;cursor:pointer}
+.meter{height:8px;background:var(--panel);border:1px solid var(--line);border-radius:4px;margin:10px 0 2px;position:relative;overflow:hidden}
+#bar{height:100%;width:0;background:var(--ok)}
+#thrMark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--accent)}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+label b{font:600 13px var(--mono);color:var(--fg);text-transform:none;letter-spacing:0}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button.s{font:600 13px var(--display);padding:9px 14px;border-radius:5px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+button.s:focus-visible,#start:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.logh{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 6px}
+.logh h2{font-size:15px;margin:0}
+#count{font:600 13px var(--mono);color:var(--accent)}
+#log{list-style:none;margin:0;padding:0;font:13px var(--mono);font-variant-numeric:tabular-nums;max-height:40vh;overflow:auto;border-top:1px solid var(--line)}
+#log li{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line)}
+#log li .t{display:flex;flex-direction:column;min-width:0}
+#log li span{color:var(--muted)}
+#log li img{width:96px;aspect-ratio:4/3;object-fit:cover;border-radius:3px;border:1px solid var(--line);cursor:zoom-in;flex:none;max-width:100%}
+#log li .nophoto{width:96px;aspect-ratio:4/3;flex:none;border:1px dashed var(--line);border-radius:3px}
+#big{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));z-index:20}
+#big img{max-width:100%;max-height:100%;border-radius:4px}
+#log:empty::before{content:"Nog niets gezien.";display:block;padding:10px 2px;color:var(--muted)}
+p.note{color:var(--muted);font-size:12px;margin:14px 0 0;max-width:65ch}
+@media (prefers-reduced-motion:reduce){#flash{transition:none}}
+</style>
+</head>
+<body>
+<header><h1>Straatwacht</h1><span id="status">uit</span></header>
+
+<div class="stage" id="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div id="flash"></div>
+  <span id="hint">Sleep om de zone op de rijbaan te tekenen</span>
+  <button id="start">Start camera</button>
+</div>
+
+<div class="meter"><div id="bar"></div><div id="thrMark"></div></div>
+
+<div class="controls">
+  <label for="sens">Gevoeligheid pixel <b id="sensV"></b><input id="sens" type="range" min="8" max="60"></label>
+  <label for="area">Drempel zone % <b id="areaV"></b><input id="area" type="range" min="2" max="60"></label>
+  <label for="frames">Frames achter elkaar <b id="framesV"></b><input id="frames" type="range" min="1" max="8"></label>
+  <label for="cool">Pauze na melding (s) <b id="coolV"></b><input id="cool" type="range" min="2" max="30"></label>
+</div>
+
+<div class="row">
+  <button class="s" id="sound">Geluid: aan</button>
+  <button class="s" id="test">Test melding</button>
+  <button class="s" id="clear">Log wissen</button>
+</div>
+
+<div class="logh"><h2>Voorbij gekomen</h2><span id="count">0</span></div>
+<ol id="log"></ol>
+
+<div id="big" hidden><img id="bigImg" alt="Foto van melding"></div>
+<p class="note">Alles gebeurt op dit toestel. Per melding wordt één kleine foto bewaard, alleen hier; maximaal 30 en na 24 uur automatisch gewist. Er wordt niets verstuurd. Richt de zone alleen op de rijbaan, niet op stoep of gevels.</p>
+
+<script>
+const $=id=>document.getElementById(id);
+const video=$('video'),ov=$('overlay'),octx=ov.getContext('2d');
+const W=160,H=120;
+const work=document.createElement('canvas');work.width=W;work.height=H;
+const wctx=work.getContext('2d',{willReadFrequently:true});
+
+const store={get(k,d){try{const v=localStorage.getItem('sw_'+k);return v==null?d:JSON.parse(v)}catch{return d}},
+             set(k,v){try{localStorage.setItem('sw_'+k,JSON.stringify(v))}catch{}}};
+
+const cfg={sens:store.get('sens',22),area:store.get('area',12),frames:store.get('frames',2),cool:store.get('cool',6),sound:store.get('sound',true)};
+let zone=store.get('zone',{x:.05,y:.4,w:.9,h:.25});
+const DAY=864e5,MAXPHOTOS=30;
+let log=store.get('log',[]).map(e=>typeof e==='number'?{t:e}:e);
+function prune(){const cut=Date.now()-DAY;let p=0;
+  log=log.slice(0,200).map(e=>{if(e.img&&(e.t<cut||++p>MAXPHOTOS))return{t:e.t};return e})}
+function saveLog(){prune();try{localStorage.setItem('sw_log',JSON.stringify(log))}catch{ // storage full: drop photos from oldest
+  for(let i=log.length-1;i>=0;i--){if(log[i].img){delete log[i].img;try{localStorage.setItem('sw_log',JSON.stringify(log));return}catch{}}}}}
+prune();
+const snap=document.createElement('canvas');snap.width=480;snap.height=360;
+function photo(){try{if(!video.videoWidth)return null;const c=snap.getContext('2d');
+  const vw=video.videoWidth,vh=video.videoHeight,s=Math.max(480/vw,360/vh),w=vw*s,h=vh*s;
+  c.drawImage(video,(480-w)/2,(360-h)/2,w,h);
+  c.font='600 14px monospace';c.fillStyle='rgba(0,0,0,.6)';c.fillRect(0,336,480,24);c.fillStyle='#ffb000';
+  c.fillText(new Date().toLocaleString('nl-NL'),8,353);
+  return snap.toDataURL('image/jpeg',.6)}catch{return null}}
+
+for(const k of ['sens','area','frames','cool']){
+  const el=$(k);el.value=cfg[k];$(k+'V').textContent=cfg[k];
+  el.oninput=()=>{cfg[k]=+el.value;$(k+'V').textContent=el.value;store.set(k,cfg[k]);if(k==='area')mark()};
+}
+function mark(){$('thrMark').style.left=Math.min(100,cfg.area*2)+'%'} mark();
+$('sound').textContent='Geluid: '+(cfg.sound?'aan':'uit');
+$('sound').onclick=()=>{cfg.sound=!cfg.sound;store.set('sound',cfg.sound);$('sound').textContent='Geluid: '+(cfg.sound?'aan':'uit')};
+
+/* zone drawing */
+let drag=null;
+function rel(e){const r=ov.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),y:Math.min(1,Math.max(0,(e.clientY-r.top)/r.height))}}
+ov.addEventListener('pointerdown',e=>{drag=rel(e);ov.setPointerCapture(e.pointerId)});
+ov.addEventListener('pointermove',e=>{if(!drag)return;const p=rel(e);
+  zone={x:Math.min(drag.x,p.x),y:Math.min(drag.y,p.y),w:Math.abs(p.x-drag.x),h:Math.abs(p.y-drag.y)}});
+ov.addEventListener('pointerup',()=>{drag=null;if(zone.w<.03||zone.h<.03)zone={x:.05,y:.4,w:.9,h:.25};store.set('zone',zone);bg=null});
+
+/* audio */
+let actx=null;
+function beep(){if(!cfg.sound||!actx)return;const t=actx.currentTime;
+  [0,.18].forEach((d,i)=>{const o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=i?1320:880;
+  g.gain.setValueAtTime(.0001,t+d);g.gain.exponentialRampToValueAtTime(.25,t+d+.01);g.gain.exponentialRampToValueAtTime(.0001,t+d+.15);
+  o.connect(g).connect(actx.destination);o.start(t+d);o.stop(t+d+.16)})}
+
+function alertHit(){
+  beep();try{navigator.vibrate&&navigator.vibrate([200,80,200])}catch{}
+  const f=$('flash');f.classList.add('on');setTimeout(()=>f.classList.remove('on'),60);
+  const s=$('status');s.textContent='auto!';s.className='hit';setTimeout(()=>{s.textContent='kijkt';s.className='live'},1500);
+  const e={t:Date.now()};log.unshift(e);saveLog();renderLog();
+  // wait a moment so the car is in frame, then take the photo
+  setTimeout(()=>{const img=photo();if(img){e.img=img;saveLog();renderLog()}},350);
+}
+function renderLog(){
+  const today=new Date().toDateString();
+  $('count').textContent=log.filter(e=>new Date(e.t).toDateString()===today).length+' vandaag';
+  $('log').innerHTML='';
+  log.slice(0,60).forEach((e,i)=>{const t=e.t,d=new Date(t),li=document.createElement('li');
+    const gap=log[i+1]?Math.round((t-log[i+1].t)/60000):null;
+    let thumb;
+    if(e.img){thumb=document.createElement('img');thumb.src=e.img;thumb.alt='Foto '+d.toLocaleTimeString('nl-NL');
+      thumb.onclick=()=>{$('bigImg').src=e.img;$('big').hidden=false}}
+    else{thumb=document.createElement('div');thumb.className='nophoto'}
+    const txt=document.createElement('div');txt.className='t';
+    txt.innerHTML=`<b>${d.toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</b><span>${d.toLocaleDateString('nl-NL',{weekday:'short',day:'numeric',month:'short'})}${gap!=null&&gap<1440?' · +'+gap+' min':''}</span>`;
+    li.append(thumb,txt);$('log').appendChild(li)})
+}
+$('big').onclick=()=>{$('big').hidden=true};
+renderLog();
+$('test').onclick=()=>{if(!actx)try{actx=new AudioContext()}catch{};alertHit()};
+$('clear').onclick=()=>{log=[];saveLog();renderLog()};
+setInterval(()=>{const n=log.filter(e=>e.img).length;prune();if(log.filter(e=>e.img).length!==n){saveLog();renderLog()}},6e4);
+
+/* detection */
+let bg=null,streak=0,coolUntil=0,wake=null;
+async function keepAwake(){try{wake=await navigator.wakeLock.request('screen')}catch{}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&video.srcObject)keepAwake()});
+
+$('start').onclick=async()=>{
+  try{actx=actx||new AudioContext()}catch{}
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:640},height:{ideal:480}},audio:false});
+    video.srcObject=stream;await video.play();
+  }catch(err){$('status').textContent='geen camera';$('hint').textContent='Camera geweigerd of niet beschikbaar ('+err.name+'). Open via https.';return}
+  $('start').hidden=true;$('status').textContent='kijkt';$('status').className='live';keepAwake();
+  requestAnimationFrame(loop);
+};
+
+let last=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(ts-last<80)return;last=ts; // ~12 fps
+  const r=ov.getBoundingClientRect();
+  if(ov.width!==r.width*devicePixelRatio){ov.width=r.width*devicePixelRatio;ov.height=r.height*devicePixelRatio}
+  wctx.drawImage(video,0,0,W,H);
+  const px=wctx.getImageData(0,0,W,H).data;
+  const x0=Math.floor(zone.x*W),y0=Math.floor(zone.y*H),x1=Math.ceil((zone.x+zone.w)*W),y1=Math.ceil((zone.y+zone.h)*H);
+  const n=(x1-x0)*(y1-y0);
+  if(!bg||bg.length!==W*H){bg=new Float32Array(W*H);for(let i=0;i<W*H;i++){const j=i*4;bg[i]=.3*px[j]+.59*px[j+1]+.11*px[j+2]}return}
+  let changed=0;const hits=[];
+  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+    const i=y*W+x,j=i*4,g=.3*px[j]+.59*px[j+1]+.11*px[j+2];
+    if(Math.abs(g-bg[i])>cfg.sens){changed++;hits.push(i)}
+  }
+  // slow background update everywhere, so light changes fade in
+  for(let i=0;i<W*H;i++){const j=i*4;bg[i]=bg[i]*.92+(.3*px[j]+.59*px[j+1]+.11*px[j+2])*.08}
+  const pct=n?changed/n*100:0;
+  $('bar').style.width=Math.min(100,pct*2)+'%';
+  $('bar').style.background=pct>=cfg.area?'var(--hit)':'var(--ok)';
+  const now=Date.now();
+  if(pct>=cfg.area){streak++;if(streak>=cfg.frames&&now>coolUntil){coolUntil=now+cfg.cool*1000;alertHit()}}else streak=0;
+  draw(hits,x0,y0,x1,y1);
+}
+function draw(hits,x0,y0,x1,y1){
+  const cw=ov.width,ch=ov.height;octx.clearRect(0,0,cw,ch);
+  // map processing grid to cover-fitted video
+  const sx=cw/W,sy=ch/H;
+  octx.fillStyle='rgba(255,77,58,.55)';
+  for(const i of hits){const x=i%W,y=(i/W)|0;octx.fillRect(x*sx,y*sy,sx+.5,sy+.5)}
+  octx.strokeStyle=Date.now()<coolUntil?'#ff4d3a':'#ffb000';octx.lineWidth=2*devicePixelRatio;
+  octx.setLineDash([8*devicePixelRatio,5*devicePixelRatio]);
+  octx.strokeRect(zone.x*cw,zone.y*ch,zone.w*cw,zone.h*ch);octx.setLineDash([]);
+}
+</script>
+</body>
+</html>
